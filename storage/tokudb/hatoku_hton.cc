@@ -201,6 +201,7 @@ static char *tokudb_log_dir;
 // static ulong tokudb_cache_parts = 1;
 const char *tokudb_hton_name = "TokuDB";
 static uint32_t tokudb_checkpointing_period;
+static uint32_t tokudb_checkpointing_rebalance_mode;
 static uint32_t tokudb_fsync_log_period;
 uint32_t tokudb_write_status_frequency;
 uint32_t tokudb_read_status_frequency;
@@ -510,6 +511,8 @@ static int tokudb_init_func(void *p) {
     }
 
     r = db_env->checkpointing_set_period(db_env, tokudb_checkpointing_period);
+    assert(r == 0);
+    r = db_env->checkpointing_set_rebalance_mode(db_env, tokudb_checkpointing_rebalance_mode);
     assert(r == 0);
     r = db_env->cleaner_set_period(db_env, tokudb_cleaner_period);
     assert(r == 0);
@@ -1356,6 +1359,21 @@ static MYSQL_SYSVAR_UINT(checkpointing_period, tokudb_checkpointing_period,
     NULL, tokudb_checkpointing_period_update, 60, 
     0, ~0U, 0);
 
+static void tokudb_checkpointing_rebalance_mode_update(THD* thd,
+                                               struct st_mysql_sys_var* sys_var,
+                                               void* var, const void* save) {
+    uint * checkpointing_rebalance_mode = (uint *) var;
+    *checkpointing_rebalance_mode = *(const ulonglong *) save;
+    int r = db_env->checkpointing_set_rebalance_mode(db_env, *checkpointing_rebalance_mode);
+    assert(r == 0);
+}
+
+static MYSQL_SYSVAR_UINT(checkpointing_rebalance_mode, tokudb_checkpointing_rebalance_mode, 
+    0, "TokuDB Checkpointing rebalance mode, 0=legacy, 1=fuzzy",
+    NULL, tokudb_checkpointing_rebalance_mode_update, 0, 
+    0, 1, 0);
+
+
 static MYSQL_SYSVAR_BOOL(directio, tokudb_directio,
     PLUGIN_VAR_READONLY, "TokuDB Enable Direct I/O ",
     NULL, NULL, FALSE);
@@ -1487,6 +1505,7 @@ static struct st_mysql_sys_var *tokudb_system_variables[] = {
     MYSQL_SYSVAR(disable_prefetching),
     MYSQL_SYSVAR(version),
     MYSQL_SYSVAR(checkpointing_period),
+    MYSQL_SYSVAR(checkpointing_rebalance_mode),
     MYSQL_SYSVAR(prelock_empty),
     MYSQL_SYSVAR(checkpoint_lock),
     MYSQL_SYSVAR(write_status_frequency),
