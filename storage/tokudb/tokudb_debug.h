@@ -35,7 +35,6 @@ static void tokudb_backtrace(void);
 #endif
 
 // tokudb debug tracing for tokudb_debug declared in tokudb_sysvars.h/.cc
-extern ulong tokudb_debug;
 #define TOKUDB_DEBUG_INIT                   (1<<0)
 #define TOKUDB_DEBUG_OPEN                   (1<<1)
 #define TOKUDB_DEBUG_ENTER                  (1<<2)
@@ -59,7 +58,7 @@ extern ulong tokudb_debug;
 }
 
 #define TOKUDB_DBUG_ENTER(f, ...) { \
-    if (tokudb_debug & TOKUDB_DEBUG_ENTER) { \
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ENTER)) { \
         TOKUDB_TRACE(f, ##__VA_ARGS__);       \
     } \
 } \
@@ -67,17 +66,20 @@ extern ulong tokudb_debug;
 
 #define TOKUDB_DBUG_RETURN(r) { \
     int rr = (r); \
-    if ((tokudb_debug & TOKUDB_DEBUG_RETURN) || (rr != 0 && (tokudb_debug & TOKUDB_DEBUG_ERROR))) { \
+    if (TOKUDB_UNLIKELY((tokudb::sysvars::debug & TOKUDB_DEBUG_RETURN) || \
+        (rr != 0 && (tokudb::sysvars::debug & TOKUDB_DEBUG_ERROR)))) { \
         TOKUDB_TRACE("return %d", rr); \
     } \
     DBUG_RETURN(rr); \
 }
 
 #define TOKUDB_HANDLER_TRACE(f, ...) \
-    fprintf(stderr, "%u %p %s:%u ha_tokudb::%s " f "\n", tokudb::thread::my_tid(), this, __FILE__, __LINE__, __FUNCTION__, ##__VA_ARGS__);
+    fprintf(stderr, "%u %p %s:%u ha_tokudb::%s " f "\n", \
+            tokudb::thread::my_tid(), this, __FILE__, __LINE__, \
+            __FUNCTION__, ##__VA_ARGS__);
 
 #define TOKUDB_HANDLER_DBUG_ENTER(f, ...) { \
-    if (tokudb_debug & TOKUDB_DEBUG_ENTER) { \
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ENTER)) { \
         TOKUDB_HANDLER_TRACE(f, ##__VA_ARGS__); \
     } \
 } \
@@ -85,14 +87,15 @@ extern ulong tokudb_debug;
 
 #define TOKUDB_HANDLER_DBUG_RETURN(r) { \
     int rr = (r); \
-    if ((tokudb_debug & TOKUDB_DEBUG_RETURN) || (rr != 0 && (tokudb_debug & TOKUDB_DEBUG_ERROR))) { \
+    if (TOKUDB_UNLIKELY((tokudb::sysvars::debug & TOKUDB_DEBUG_RETURN) || \
+        (rr != 0 && (tokudb::sysvars::debug & TOKUDB_DEBUG_ERROR)))) { \
         TOKUDB_HANDLER_TRACE("return %d", rr); \
     } \
     DBUG_RETURN(rr); \
 }
 
 #define TOKUDB_HANDLER_DBUG_VOID_RETURN { \
-    if (tokudb_debug & TOKUDB_DEBUG_RETURN) { \
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_RETURN)) { \
         TOKUDB_HANDLER_TRACE("return");       \
     } \
     DBUG_VOID_RETURN; \
@@ -113,15 +116,20 @@ extern ulong tokudb_debug;
  * in the fractal tree layer, which dumps engine status to the error log.
  */
 
-void toku_hton_assert_fail(const char*/*expr_as_string*/,const char */*fun*/,const char*/*file*/,int/*line*/, int/*errno*/) __attribute__((__visibility__("default"))) __attribute__((__noreturn__));
+void toku_hton_assert_fail(const char* /*expr_as_string*/, const char * /*fun*/,
+                           const char* /*file*/, int /*line*/, int /*errno*/)
+                           __attribute__((__visibility__("default")))
+                           __attribute__((__noreturn__));
 
-#define assert_always(expr)      ((expr)      ? (void)0 : toku_hton_assert_fail(#expr, __FUNCTION__, __FILE__, __LINE__, errno))
+#define assert_always(expr) ((expr) ? (void)0 : \
+    toku_hton_assert_fail(#expr, __FUNCTION__, __FILE__, __LINE__, errno))
 
 #undef assert
 #define assert(expr) assert_always(expr)
 
 #ifdef TOKUDB_DEBUG
-    #define assert_debug(expr)       ((expr)      ? (void)0 : toku_hton_assert_fail(#expr, __FUNCTION__, __FILE__, __LINE__, errno))
+    #define assert_debug(expr) ((expr) ? (void)0 : \
+        toku_hton_assert_fail(#expr, __FUNCTION__, __FILE__, __LINE__, errno))
 #else
     #define assert_debug(expr)       (void)0
 #endif // TOKUDB_DEBUG

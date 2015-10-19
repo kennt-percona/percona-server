@@ -190,7 +190,7 @@ int ha_tokudb::fast_update(THD *thd, List<Item> &update_fields, List<Item> &upda
     TOKUDB_HANDLER_DBUG_ENTER("");
     int error = 0;
 
-    if (tokudb_debug & TOKUDB_DEBUG_UPSERT) {
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_UPSERT)) {
         dump_item_list("fields", update_fields);
         dump_item_list("values", update_values);
         if (conds) {
@@ -215,7 +215,7 @@ int ha_tokudb::fast_update(THD *thd, List<Item> &update_fields, List<Item> &upda
 
 check_error:
     if (error != 0) {
-        if (THDVAR(thd, disable_slow_update) != 0)
+        if (tokudb::sysvars::disable_slow_update(thd) != 0)
             error = HA_ERR_UNSUPPORTED;
         if (error != ENOTSUP)
             print_error(error, MYF(0));
@@ -789,7 +789,7 @@ int ha_tokudb::upsert(THD *thd, List<Item> &update_fields, List<Item> &update_va
 
     int error = 0;
 
-    if (tokudb_debug & TOKUDB_DEBUG_UPSERT) {
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_UPSERT)) {
         fprintf(stderr, "upsert\n");
         dump_item_list("update_fields", update_fields);
         dump_item_list("update_values", update_values);
@@ -812,7 +812,7 @@ int ha_tokudb::upsert(THD *thd, List<Item> &update_fields, List<Item> &update_va
 
 check_error:
     if (error != 0) {
-        if (THDVAR(thd, disable_slow_upsert) != 0)
+        if (tokudb::sysvars::disable_slow_upsert(thd) != 0)
             error = HA_ERR_UNSUPPORTED;
         if (error != ENOTSUP)
             print_error(error, MYF(0));

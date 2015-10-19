@@ -486,94 +486,48 @@ static uint32_t fill_dynamic_blob_row_mutator(
 // TODO: carefully review to make sure that the right information is used
 // TODO: namely, when do we get stuff from share->kc_info and when we get
 // TODO: it from altered_kc_info, and when is keynr associated with the right thing
-uint32_t ha_tokudb::fill_row_mutator(
-    uchar* buf, 
-    uint32_t* columns, 
-    uint32_t num_columns,
-    TABLE* altered_table,
-    KEY_AND_COL_INFO* altered_kc_info,
-    uint32_t keynr,
-    bool is_add
-    ) 
-{
-    if (tokudb_debug & TOKUDB_DEBUG_ALTER_TABLE) {
+uint32_t ha_tokudb::fill_row_mutator(uchar* buf, uint32_t* columns,
+                                     uint32_t num_columns, TABLE* altered_table,
+                                     KEY_AND_COL_INFO* altered_kc_info,
+                                     uint32_t keynr, bool is_add) {
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ALTER_TABLE)) {
         printf("*****some info:*************\n");
-        printf(
-            "old things: num_null_bytes %d, num_offset_bytes %d, fixed_field_size %d, fixed_field_size %d\n",
-            table->s->null_bytes,
-            share->kc_info.num_offset_bytes,
-            share->kc_info.mcp_info[keynr].fixed_field_size,
-            share->kc_info.mcp_info[keynr].len_of_offsets
-            );
-        printf(
-            "new things: num_null_bytes %d, num_offset_bytes %d, fixed_field_size %d, fixed_field_size %d\n",
-            altered_table->s->null_bytes,
-            altered_kc_info->num_offset_bytes,
-            altered_kc_info->mcp_info[keynr].fixed_field_size,
-            altered_kc_info->mcp_info[keynr].len_of_offsets
-            );
+        printf("old things: num_null_bytes %d, num_offset_bytes %d, "
+               "fixed_field_size %d, fixed_field_size %d\n",
+               table->s->null_bytes, share->kc_info.num_offset_bytes,
+               share->kc_info.mcp_info[keynr].fixed_field_size,
+               share->kc_info.mcp_info[keynr].len_of_offsets);
+        printf("new things: num_null_bytes %d, num_offset_bytes %d, "
+               "fixed_field_size %d, fixed_field_size %d\n",
+               altered_table->s->null_bytes, altered_kc_info->num_offset_bytes,
+               altered_kc_info->mcp_info[keynr].fixed_field_size,
+               altered_kc_info->mcp_info[keynr].len_of_offsets);
         printf("****************************\n");
     }
     uchar* pos = buf;
     bool has_blobs = false;
-    pos += fill_static_row_mutator(
-        pos,
-        table,
-        altered_table,
-        &share->kc_info,
-        altered_kc_info,
-        keynr
-        );
+    pos += fill_static_row_mutator(pos, table, altered_table, &share->kc_info,
+                                   altered_kc_info, keynr);
     
     if (is_add) {
-        pos += fill_dynamic_row_mutator(
-            pos,
-            columns,
-            num_columns,
-            altered_table,
-            altered_kc_info,
-            keynr,
-            is_add,
-            &has_blobs
-            );
-    }
-    else {
-        pos += fill_dynamic_row_mutator(
-            pos,
-            columns,
-            num_columns,
-            table,
-            &share->kc_info,
-            keynr,
-            is_add,
-            &has_blobs
-            );
+        pos += fill_dynamic_row_mutator(pos, columns, num_columns,
+                                        altered_table, altered_kc_info,
+                                        keynr, is_add, &has_blobs);
+    } else {
+        pos += fill_dynamic_row_mutator(pos, columns, num_columns, table,
+                                        &share->kc_info, keynr, is_add,
+                                        &has_blobs);
     }
     if (has_blobs) {
-        pos += fill_static_blob_row_mutator(
-            pos,
-            table,
-            &share->kc_info
-            );
+        pos += fill_static_blob_row_mutator(pos, table, &share->kc_info);
         if (is_add) {
-            pos += fill_dynamic_blob_row_mutator(
-                pos,
-                columns,
-                num_columns,
-                altered_table,
-                altered_kc_info,
-                is_add
-                );
-        }
-        else {
-            pos += fill_dynamic_blob_row_mutator(
-                pos,
-                columns,
-                num_columns,
-                table,
-                &share->kc_info,
-                is_add
-                );
+            pos += fill_dynamic_blob_row_mutator(pos, columns, num_columns,
+                                                 altered_table, altered_kc_info,
+                                                 is_add);
+        } else {
+            pos += fill_dynamic_blob_row_mutator(pos, columns, num_columns,
+                                                 table, &share->kc_info,
+                                                 is_add);
         }
     }
     return pos-buf;

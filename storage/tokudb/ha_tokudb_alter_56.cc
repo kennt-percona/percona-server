@@ -167,7 +167,7 @@ static ulong fix_handler_flags(THD *thd, TABLE *table, TABLE *altered_table, Alt
     // column addition later.
     if (handler_flags & (Alter_inplace_info::ADD_COLUMN + Alter_inplace_info::DROP_COLUMN)) {
         if (handler_flags & (Alter_inplace_info::ADD_INDEX + Alter_inplace_info::DROP_INDEX)) {
-            if (tables_have_same_keys(table, altered_table, THDVAR(thd, alter_print_error) != 0, false)) {
+            if (tables_have_same_keys(table, altered_table, tokudb::sysvars::alter_print_error(thd) != 0, false)) {
                 handler_flags &= ~(Alter_inplace_info::ADD_INDEX + Alter_inplace_info::DROP_INDEX);
             }
         }
@@ -226,7 +226,7 @@ static bool only_flags(ulong bits, ulong mask) {
 enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *altered_table, Alter_inplace_info *ha_alter_info) {
     TOKUDB_HANDLER_DBUG_ENTER("");
 
-    if (tokudb_debug & TOKUDB_DEBUG_ALTER_TABLE) {
+    if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ALTER_TABLE)) {
         print_alter_info(altered_table, ha_alter_info);
     }
 
@@ -241,7 +241,7 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
     ctx->altered_table_kc_info = &ctx->altered_table_kc_info_base;
     memset(ctx->altered_table_kc_info, 0, sizeof (KEY_AND_COL_INFO));
 
-    if (get_disable_hot_alter(thd)) {
+    if (tokudb::sysvars::disable_hot_alter(thd)) {
         ; // do nothing
     } else
     // add or drop index
@@ -249,7 +249,7 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
                    Alter_inplace_info::ADD_INDEX + Alter_inplace_info::ADD_UNIQUE_INDEX)) {
         if (table->s->null_bytes == altered_table->s->null_bytes && 
             (ha_alter_info->index_add_count > 0 || ha_alter_info->index_drop_count > 0) &&
-            !tables_have_same_keys(table, altered_table, THDVAR(thd, alter_print_error) != 0, false) &&
+            !tables_have_same_keys(table, altered_table, tokudb::sysvars::alter_print_error(thd) != 0, false) &&
             is_disjoint_add_drop(ha_alter_info)) {
 
             if (ctx->handler_flags & (Alter_inplace_info::DROP_INDEX + Alter_inplace_info::DROP_UNIQUE_INDEX)) {
@@ -264,7 +264,7 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
                 if (ha_alter_info->index_add_count == 1 && ha_alter_info->index_drop_count == 0 &&  // only one add or drop
                     ctx->handler_flags == Alter_inplace_info::ADD_INDEX &&                          // must be add index not add unique index
                     thd_sql_command(thd) == SQLCOM_CREATE_INDEX &&                                  // must be a create index command
-                    get_create_index_online(thd)) {                                                 // must be enabled
+                    tokudb::sysvars::create_index_online(thd)) {                                                 // must be enabled
                     // external_lock set WRITE_ALLOW_WRITE which allows writes concurrent with the index creation
                     result = HA_ALTER_INPLACE_NO_LOCK_AFTER_PREPARE; 
                 }
@@ -303,7 +303,7 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
         uint32_t num_added_columns = 0;
         int r = find_changed_columns(added_columns, &num_added_columns, table, altered_table);
         if (r == 0) {
-            if (tokudb_debug & TOKUDB_DEBUG_ALTER_TABLE) {
+            if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ALTER_TABLE)) {
                 for (uint32_t i = 0; i < num_added_columns; i++) {
                     uint32_t curr_added_index = added_columns[i];
                     Field* curr_added_field = altered_table->field[curr_added_index];
@@ -322,7 +322,7 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
         uint32_t num_dropped_columns = 0;
         int r = find_changed_columns(dropped_columns, &num_dropped_columns, altered_table, table);
         if (r == 0) {
-            if (tokudb_debug & TOKUDB_DEBUG_ALTER_TABLE) {
+            if (TOKUDB_UNLIKELY(tokudb::sysvars::debug & TOKUDB_DEBUG_ALTER_TABLE)) {
                 for (uint32_t i = 0; i < num_dropped_columns; i++) {
                     uint32_t curr_dropped_index = dropped_columns[i];
                     Field* curr_dropped_field = table->field[curr_dropped_index];
@@ -365,14 +365,14 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
         // alter auto_increment
         if (only_flags(create_info->used_fields, HA_CREATE_USED_AUTO)) {
             // do a sanity check that the table is what we think it is
-            if (tables_have_same_keys_and_columns(table, altered_table, THDVAR(thd, alter_print_error) != 0)) {
+            if (tables_have_same_keys_and_columns(table, altered_table, tokudb::sysvars::alter_print_error(thd) != 0)) {
                 result = HA_ALTER_INPLACE_EXCLUSIVE_LOCK;
             }
         }
         // alter row_format
         else if (only_flags(create_info->used_fields, HA_CREATE_USED_ROW_FORMAT)) {
             // do a sanity check that the table is what we think it is
-            if (tables_have_same_keys_and_columns(table, altered_table, THDVAR(thd, alter_print_error) != 0)) {
+            if (tables_have_same_keys_and_columns(table, altered_table, tokudb::sysvars::alter_print_error(thd) != 0)) {
                 result = HA_ALTER_INPLACE_EXCLUSIVE_LOCK;
             }
         }
@@ -384,14 +384,17 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
     }
 #endif
 
-    if (result != HA_ALTER_INPLACE_NOT_SUPPORTED && table->s->null_bytes != altered_table->s->null_bytes &&
-        (tokudb_debug & TOKUDB_DEBUG_ALTER_TABLE)) {
+    if (TOKUDB_UNLIKELY(result != HA_ALTER_INPLACE_NOT_SUPPORTED &&
+        table->s->null_bytes != altered_table->s->null_bytes &&
+        (tokudb::sysvars::debug & TOKUDB_DEBUG_ALTER_TABLE))) {
         TOKUDB_HANDLER_TRACE("q %s", thd->query());
-        TOKUDB_HANDLER_TRACE("null bytes %u -> %u", table->s->null_bytes, altered_table->s->null_bytes);
+        TOKUDB_HANDLER_TRACE("null bytes %u -> %u", table->s->null_bytes,
+                             altered_table->s->null_bytes);
     }
 
     // turn a not supported result into an error if the slow alter table (copy) is disabled
-    if (result == HA_ALTER_INPLACE_NOT_SUPPORTED && get_disable_slow_alter(thd)) {
+    if (result == HA_ALTER_INPLACE_NOT_SUPPORTED &&
+        tokudb::sysvars::disable_slow_alter(thd)) {
         print_error(HA_ERR_UNSUPPORTED, MYF(0));
         result = HA_ALTER_ERROR;
     }
@@ -400,7 +403,8 @@ enum_alter_inplace_result ha_tokudb::check_if_supported_inplace_alter(TABLE *alt
 }
 
 // Prepare for the alter operations
-bool ha_tokudb::prepare_inplace_alter_table(TABLE *altered_table, Alter_inplace_info *ha_alter_info) {
+bool ha_tokudb::prepare_inplace_alter_table(TABLE* altered_table,
+                                            Alter_inplace_info* ha_alter_info) {
     TOKUDB_HANDLER_DBUG_ENTER("");
     tokudb_alter_ctx *ctx = static_cast<tokudb_alter_ctx *>(ha_alter_info->handler_ctx);
     assert_always(transaction); // transaction must exist after table is locked
@@ -410,26 +414,36 @@ bool ha_tokudb::prepare_inplace_alter_table(TABLE *altered_table, Alter_inplace_
 }
 
 // Execute the alter operations.
-bool ha_tokudb::inplace_alter_table(TABLE *altered_table, Alter_inplace_info *ha_alter_info) {
+bool ha_tokudb::inplace_alter_table(TABLE* altered_table,
+                                    Alter_inplace_info* ha_alter_info) {
     TOKUDB_HANDLER_DBUG_ENTER("");
 
     int error = 0;
     tokudb_alter_ctx *ctx = static_cast<tokudb_alter_ctx *>(ha_alter_info->handler_ctx);
     HA_CREATE_INFO *create_info = ha_alter_info->create_info;
 
-    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::DROP_INDEX + Alter_inplace_info::DROP_UNIQUE_INDEX))) {
+    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::DROP_INDEX +
+        Alter_inplace_info::DROP_UNIQUE_INDEX))) {
         error = alter_table_drop_index(altered_table, ha_alter_info);
     }
-    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::ADD_INDEX + Alter_inplace_info::ADD_UNIQUE_INDEX))) {
+    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::ADD_INDEX +
+        Alter_inplace_info::ADD_UNIQUE_INDEX))) {
         error = alter_table_add_index(altered_table, ha_alter_info);
     }
-    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::ADD_COLUMN + Alter_inplace_info::DROP_COLUMN))) { 
+    if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::ADD_COLUMN +
+        Alter_inplace_info::DROP_COLUMN))) {
         error = alter_table_add_or_drop_column(altered_table, ha_alter_info);
     }
-    if (error == 0 && (ctx->handler_flags & Alter_inplace_info::CHANGE_CREATE_OPTION) && (create_info->used_fields & HA_CREATE_USED_AUTO)) {
-        error = write_auto_inc_create(share->status_block, create_info->auto_increment_value, ctx->alter_txn);
+    if (error == 0 && (ctx->handler_flags &
+        Alter_inplace_info::CHANGE_CREATE_OPTION) &&
+        (create_info->used_fields & HA_CREATE_USED_AUTO)) {
+        error = write_auto_inc_create(share->status_block,
+                                      create_info->auto_increment_value,
+                                      ctx->alter_txn);
     }
-    if (error == 0 && (ctx->handler_flags & Alter_inplace_info::CHANGE_CREATE_OPTION) && (create_info->used_fields & HA_CREATE_USED_ROW_FORMAT)) {
+    if (error == 0 && (ctx->handler_flags &
+        Alter_inplace_info::CHANGE_CREATE_OPTION) &&
+        (create_info->used_fields & HA_CREATE_USED_ROW_FORMAT)) {
         // Get the current compression
         DB *db = share->key_file[0];
         error = db->get_compression_method(db, &ctx->orig_compression_method);
@@ -437,9 +451,12 @@ bool ha_tokudb::inplace_alter_table(TABLE *altered_table, Alter_inplace_info *ha
 
         // Set the new compression
 #if TOKU_INCLUDE_OPTION_STRUCTS
-        toku_compression_method method = row_format_to_toku_compression_method((srv_row_format_t) create_info->option_struct->row_format);
+        toku_compression_method method =
+            row_format_to_toku_compression_method((tokudb::sysvars::row_format_t)
+                                                  create_info->option_struct->row_format);
 #else
-        toku_compression_method method = row_type_to_toku_compression_method(create_info->row_type);
+        toku_compression_method method =
+            row_type_to_toku_compression_method(create_info->row_type);
 #endif
         uint32_t curr_num_DBs = table->s->keys + tokudb_test(hidden_primary_key);
         for (uint32_t i = 0; i < curr_num_DBs; i++) {
