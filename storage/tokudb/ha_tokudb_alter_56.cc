@@ -422,6 +422,10 @@ bool ha_tokudb::inplace_alter_table(TABLE* altered_table,
     tokudb_alter_ctx *ctx = static_cast<tokudb_alter_ctx *>(ha_alter_info->handler_ctx);
     HA_CREATE_INFO *create_info = ha_alter_info->create_info;
 
+    // this should be enough to handle locking as the higher level MDL
+    // on this table should prevent any new analyze tasks.
+    share->cancel_background_jobs();
+
     if (error == 0 && (ctx->handler_flags & (Alter_inplace_info::DROP_INDEX +
         Alter_inplace_info::DROP_UNIQUE_INDEX))) {
         error = alter_table_drop_index(altered_table, ha_alter_info);
@@ -668,7 +672,7 @@ int ha_tokudb::alter_table_add_or_drop_column(TABLE *altered_table, Alter_inplac
 // If abort then abort the alter transaction and try to rollback the non-transactional changes.
 bool ha_tokudb::commit_inplace_alter_table(TABLE *altered_table, Alter_inplace_info *ha_alter_info, bool commit) {
     TOKUDB_HANDLER_DBUG_ENTER("");
-    
+
     tokudb_alter_ctx *ctx = static_cast<tokudb_alter_ctx *>(ha_alter_info->handler_ctx);
     bool result = false; // success
     THD *thd = ha_thd();
@@ -768,7 +772,6 @@ bool ha_tokudb::commit_inplace_alter_table(TABLE *altered_table, Alter_inplace_i
             }
         }
     }
-    
     DBUG_RETURN(result);
 }
 

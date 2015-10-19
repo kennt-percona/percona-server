@@ -18,6 +18,7 @@ SET(BUILD_TESTING OFF CACHE BOOL "")
 SET(USE_VALGRIND OFF CACHE BOOL "")
 SET(TOKU_DEBUG_PARANOID OFF CACHE BOOL "")
 
+# Enable TokuDB's TOKUDB_DEBUG in debug builds
 SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DTOKUDB_DEBUG")
 
 IF(NOT DEFINED TOKUDB_VERSION)
@@ -102,6 +103,7 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/${TOKU_FT_DIR_NAME}/portability)
 SET(TOKUDB_PLUGIN_DYNAMIC "ha_tokudb")
 SET(TOKUDB_SOURCES
     ha_tokudb.cc
+    tokudb_background.cc
     tokudb_information_schema.cc
     tokudb_sysvars.cc
     tokudb_thread.cc)

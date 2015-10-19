@@ -28,6 +28,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #include "hatoku_hton.h"
 #include "hatoku_cmp.h"
+#include "tokudb_background.h"
 
 #define HA_TOKU_ORIG_VERSION 4
 #define HA_TOKU_VERSION 4
@@ -45,83 +46,324 @@ typedef struct loader_context {
 } *LOADER_CONTEXT;
 
 //
-// This object stores table information that is to be shared
+// This class stores table information that is to be shared
 // among all ha_tokudb objects.
-// There is one instance per table, shared among threads.
+// There is one instance per table, shared among handlers.
 // Some of the variables here are the DB* pointers to indexes,
 // and auto increment information.
 //
+// When the last user releases it's reference on the share,
+// it closes all of its database handles and releases all info
+// The share instance stays around though so some data can be transiently
+// kept across open-close-open-close cycles. These data will be explicitly
+// noted below.
+//
 class TOKUDB_SHARE {
 public:
+    enum share_state_t {
+        CLOSED,
+        OPENED,
+        ERROR
+    };
+
+    // one time, start up init
+    static void static_init(void);
+
+    // one time, shutdown destroy
+    static void static_destroy(void);
+
+    // retuns a locked, properly reference counted share
+    // callers must check to ensure share is in correct state for callers use
+    // and unlock the share.
+    // if create_new is set, a new "CLOSED" share will be created if one
+    // doesn't exist, otherwise will return NULL if an existing is not found.
+    static TOKUDB_SHARE* get_share(const char* table_name,
+                                   TABLE_SHARE* table_share,
+                                   THR_LOCK_DATA* data, bool create_new);
+
+    // removes a share entirely from the pool, call to rename/deleta a table
+    // caller must hold ddl_mutex on this share and the share MUST have
+    // exactly 0 _use_count
+    static void drop_share(TOKUDB_SHARE* share);
+
+    void* operator new(size_t sz);
+    void operator delete(void* p);
+
     TOKUDB_SHARE(void);
-    void init(void);
-    void destroy(void);
+
+    // increases the ref count and waits for any currently executing state
+    // transition to complete
+    // returns current state and leaves share locked
+    // callers must check to ensure share is in correct state for callers use
+    // and unlock the share.
+    share_state_t addref(void);
+
+    // decreases the ref count and potentially closes the share
+    // caller must not have ownership of mutex, will lock and release
+    int release(void);
+
+    // returns the current use count
+    // no locking requirements
+    int use_count(void) const {
+        return _use_count;
+    }
+
+    // locks the share
+    inline void lock(void) const {
+        _mutex.lock();
+    }
+
+    // unlocks the share
+    inline void unlock(void) const {
+        _mutex.unlock();
+    }
+
+    // returns the current state of the share
+    // no locking requirements
+    inline share_state_t state(void) const {
+        return _state;
+    }
+
+    // sets the state of the share
+    // caller must hold mutex on this share
+    inline void set_state(share_state_t state) {
+        assert_debug(_mutex.is_owned_by_me() == true);
+        _state = state;
+    }
+
+    // returns the full MySQL table name of the table ex:
+    // ./database/table
+    // no locking requirements
+    inline const char* full_table_name(void) const {
+        return _full_table_name.ptr();
+    }
+
+    // returns the strlen of the full table name
+    // no locking requirements
+    inline uint full_table_name_length(void) const {
+        return _full_table_name.length();
+    }
+
+    // returns the parsed database name this table resides in
+    // no locking requirements
+    inline const char* database_name(void) const {
+        return _database_name.ptr();
+    }
+
+    // returns the strlen of the database name
+    // no locking requirements
+    inline uint database_name_length(void) const {
+        return _database_name.length();
+    }
+
+    // returns the parsed table name of this table
+    // no locking requirements
+    inline const char* table_name(void) const {
+        return _table_name.ptr();
+    }
+
+    // returns the strlen of the the table name
+    // no locking requirements
+    inline uint table_name_length(void) const {
+        return _table_name.length();
+    }
+
+    // sets the estimated number of rows in the table
+    // should be called only during share initialization and info call
+    // caller must hold mutex on this share unless specified by 'locked'
+    inline void set_row_count(uint64_t rows, bool locked) {
+        if (!locked) {
+            lock();
+        } else {
+            assert_debug(_mutex.is_owned_by_me() == true);
+        }
+        if (_rows && rows == 0)
+            _row_delta_activity = 0;
+
+        _rows = rows;
+        if (!locked) {
+            unlock();
+        }
+    }
+
+    // updates tracked row count and ongoing table change delta tracking
+    // called from any ha_tokudb operation that inserts/modifies/deletes rows
+    // may spawn background analysis if enabled, allowed and threshold hit
+    // caller must not have ownership of mutex, will lock and release
+    void update_row_count(THD* thd, uint64_t added, uint64_t deleted,
+                                 uint64_t updated);
+
+    // returns the current row count estimate
+    // no locking requirements
+    inline ha_rows row_count(void) const {
+        return _rows;
+    }
+
+    // initializes cardinality statistics, takes ownership of incoming buffer
+    // caller must hold mutex on this share
+    inline void init_cardinality_counts(uint32_t rec_per_keys,
+                                        uint64_t* rec_per_key) {
+        assert_debug(_mutex.is_owned_by_me() == true);
+        // can not change number of keys live
+        assert_always(_rec_per_key == NULL && _rec_per_keys == 0);
+        _rec_per_keys = rec_per_keys;
+        _rec_per_key = rec_per_key;
+        _card_changed = true;
+    }
+
+    // update the cardinality statistics. number of records must match
+    // caller must hold mutex on this share
+    inline void update_cardinality_counts(uint32_t rec_per_keys,
+                                          const uint64_t* rec_per_key) {
+        assert_debug(_mutex.is_owned_by_me() == true);
+        // can not change number of keys live
+        assert_always(rec_per_keys == _rec_per_keys);
+        assert_always(rec_per_key != NULL);
+        memcpy(_rec_per_key, rec_per_key, _rec_per_keys * sizeof(uint64_t));
+        _card_changed = true;
+    }
+
+    // disallow any auto analysis from taking place
+    // caller must hold mutex on this share
+    inline void disallow_auto_analysis(void) {
+        assert_debug(_mutex.is_owned_by_me() == true);
+        _allow_auto_analysis = false;
+    }
+
+    // allow any auto analysis to take place
+    // pass in true for 'reset_deltas' to reset delta counting to 0
+    // caller must hold mutex on this share
+    inline void allow_auto_analysis(bool reset_deltas) {
+        assert_debug(_mutex.is_owned_by_me() == true);
+        _allow_auto_analysis = true;
+        if (reset_deltas == true)
+            _row_delta_activity = 0;
+    }
+
+    // cancels all background jobs for this share
+    // no locking requirements
+    inline void cancel_background_jobs(void) const {
+        tokudb::background::_job_manager->cancel_job(full_table_name());
+    }
+
+    // copies cardinality statistics into TABLE counter set
+    // caller must not have ownership of mutex, will lock and release
+    void set_cardinality_counts_in_table(TABLE* table);
+
+    // performs table analysis on underlying indices and produces estimated
+    // cardinality statistics.
+    // on success updates cardinality counts in status database and this share
+    // MUST pass a valid THD to access session variables.
+    // MAY pass txn. If txn is passed, assumes an explicit user scheduled
+    // ANALYZE and not an auto ANALYZE resulting from delta threshold
+    // uses session variables:
+    //  tokudb_analyze_in_background, tokudb_analyze_throttle,
+    //  tokudb_analyze_time, and tokudb_analyze_delete_fraction
+    // caller must hold mutex on this share
+    int analyze_standard(THD* thd, DB_TXN* txn);
+
+    // performs table scan and updates the internal FT logical row count value
+    // on success also updates share row count estimate.
+    // MUST pass a valid THD to access session variables.
+    // MAY pass txn. If txn is passed, assumes an explicit user scheduled
+    // uses session variables:
+    //  tokudb_analyze_in_background, and tokudb_analyze_throttle
+    // caller must not have ownership of mutex, will lock and release
+    int analyze_recount_rows(THD* thd, DB_TXN* txn);
 
 public:
-    char *table_name;
-    uint table_name_length, use_count;
-    tokudb::thread::mutex_t mutex;
-    THR_LOCK lock;
-
+    //*********************************
+    // Destroyed and recreated on open-close-open
     ulonglong auto_ident;
     ulonglong last_auto_increment, auto_inc_create_value;
-    //
-    // estimate on number of rows in table
-    //
-    ha_rows rows;
-    //
+
     // estimate on number of rows added in the process of a locked tables
     // this is so we can better estimate row count during a lock table
-    //
     ha_rows rows_from_locked_table;
-    DB *status_block;
-    //
+    DB* status_block;
+
     // DB that is indexed on the primary key
-    //
-    DB *file;
-    //
+    DB* file;
+
     // array of all DB's that make up table, includes DB that
     // is indexed on the primary key, add 1 in case primary
     // key is hidden
-    //
-    DB *key_file[MAX_KEY +1];
+    DB* key_file[MAX_KEY + 1];
     uint status, version, capabilities;
     uint ref_length;
-    //
+
     // whether table has an auto increment column
-    //
     bool has_auto_inc;
-    //
+
     // index of auto increment column in table->field, if auto_inc exists
-    //
     uint ai_field_index;
-    //
+
     // whether the primary key has a string
-    //
     bool pk_has_string;
 
     KEY_AND_COL_INFO kc_info;
-    
-    // 
+
+    // key info copied from TABLE_SHARE, used by background jobs that have no
+    // access to a handler instance
+    uint _keys;
+    uint _max_key_parts;
+    struct key_descriptor_t {
+        uint _parts;
+        bool _is_unique;
+        char* _name;
+    };
+    key_descriptor_t* _key_descriptors;
+
     // we want the following optimization for bulk loads, if the table is empty, 
     // attempt to grab a table lock. emptiness check can be expensive, 
     // so we try it once for a table. After that, we keep this variable around 
-    // to tell us to not try it again. 
-    // 
-    bool try_table_lock; 
+    // to tell us to not try it again.
+    bool try_table_lock;
 
     bool has_unique_keys;
     bool replace_into_fast;
-    tokudb::thread::rwlock_t num_DBs_lock;
+    tokudb::thread::rwlock_t _num_DBs_lock;
     uint32_t num_DBs;
 
-    tokudb::thread::event_t _openclose_event;
-    enum { CLOSED, OPENING, OPENED, CLOSING, ERROR } m_state;
-    int m_error;
-    int m_initialize_count;
+private:
+    static HASH _open_tables;
+    static tokudb::thread::mutex_t _open_tables_mutex;
 
-    uint n_rec_per_key;
-    uint64_t *rec_per_key;
+    static uchar* hash_get_key(TOKUDB_SHARE* share,
+                               size_t* length,
+                               my_bool not_used __attribute__ ((unused)));
+
+    static void hash_free_element(TOKUDB_SHARE* share);
+
+    //*********************************
+    // Spans open-close-open
+    mutable tokudb::thread::mutex_t _mutex;
+    mutable tokudb::thread::mutex_t _ddl_mutex;
+    uint _use_count;
+
+    share_state_t _state;
+
+    ulonglong _row_delta_activity;
+    bool _allow_auto_analysis;
+
+    String _full_table_name;
+    String _database_name;
+    String _table_name;
+
+    //*********************************
+    // Destroyed and recreated on open-close-open
+    THR_LOCK _thr_lock;
+
+    // estimate on number of rows in table
+    ha_rows _rows;
+
+    // cardinality counts
+    uint32_t _rec_per_keys;
+    uint64_t* _rec_per_key;
+    bool _card_changed;
+
+    void init(const char* table_name);
+    void destroy(void);
 };
 
 typedef struct st_filter_key_part_info {
@@ -278,6 +520,7 @@ private:
     // 
     ulonglong added_rows;
     ulonglong deleted_rows;
+    ulonglong updated_rows;
 
 
     uint last_dup_key;
@@ -540,12 +783,15 @@ public:
     int get_status(DB_TXN* trans);
     void init_hidden_prim_key_info(DB_TXN *txn);
     inline void get_auto_primary_key(uchar * to) {
-        share->mutex.lock();
+        share->lock();
         share->auto_ident++;
         hpk_num_to_char(to, share->auto_ident);
-        share->mutex.unlock();
+        share->unlock();
     }
-    virtual void get_auto_increment(ulonglong offset, ulonglong increment, ulonglong nb_desired_values, ulonglong * first_value, ulonglong * nb_reserved_values);
+    virtual void get_auto_increment(ulonglong offset, ulonglong increment,
+                                    ulonglong nb_desired_values,
+                                    ulonglong* first_value,
+                                    ulonglong* nb_reserved_values);
     bool is_optimize_blocking();
     bool is_auto_inc_singleton();
     void print_error(int error, myf errflag);

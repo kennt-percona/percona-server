@@ -764,7 +764,7 @@ int ha_tokudb::send_update_message(List<Item> &update_fields, List<Item> &update
         marshall_update(update_message, lhs_item, rhs_item, table, share);
     }
 
-    share->num_DBs_lock.lock_read();
+    share->_num_DBs_lock.lock_read();
 
     if (share->num_DBs > table->s->keys + tokudb_test(hidden_primary_key)) { // hot index in progress
         error = ENOTSUP; // run on the slow path
@@ -776,7 +776,7 @@ int ha_tokudb::send_update_message(List<Item> &update_fields, List<Item> &update
         error = share->key_file[primary_key]->update(share->key_file[primary_key], txn, &key_dbt, &update_dbt, 0);
     }
 
-    share->num_DBs_lock.unlock();
+    share->_num_DBs_lock.unlock();
         
     return error;
 }
@@ -917,7 +917,7 @@ int ha_tokudb::send_upsert_message(THD *thd, List<Item> &update_fields, List<Ite
         marshall_update(update_message, lhs_item, rhs_item, table, share);
     }
 
-    share->num_DBs_lock.lock_read();
+    share->_num_DBs_lock.lock_read();
 
     if (share->num_DBs > table->s->keys + tokudb_test(hidden_primary_key)) { // hot index in progress
         error = ENOTSUP; // run on the slow path
@@ -929,7 +929,7 @@ int ha_tokudb::send_upsert_message(THD *thd, List<Item> &update_fields, List<Ite
         error = share->key_file[primary_key]->update(share->key_file[primary_key], txn, &key_dbt, &update_dbt, 0);
     }
 
-    share->num_DBs_lock.unlock();
+    share->_num_DBs_lock.unlock();
 
     return error;
 }

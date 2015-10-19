@@ -28,6 +28,8 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #include <ctype.h>
 #include <stdint.h>
+#include <time.h>
+
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 #if defined(_WIN32)
@@ -47,6 +49,17 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #if (50600 <= MYSQL_VERSION_ID && MYSQL_VERSION_ID <= 50699) || (50700 <= MYSQL_VERSION_ID && MYSQL_VERSION_ID <= 50799)
 #include <binlog.h>
+#endif
+
+#undef PACKAGE
+#undef VERSION
+#undef HAVE_DTRACE
+#undef _DTRACE_VERSION
+
+/* We define DTRACE after mysql_priv.h in case it disabled dtrace in the main server */
+#ifdef HAVE_DTRACE
+#define _DTRACE_VERSION 1
+#else
 #endif
 
 #include <mysql/plugin.h>
