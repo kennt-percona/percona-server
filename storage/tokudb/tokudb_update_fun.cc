@@ -397,7 +397,7 @@ static int tokudb_hcad_update_fun(
 
     operation = extra_pos[0];
     extra_pos++;
-    assert(operation == UP_COL_ADD_OR_DROP);
+    assert_always(operation == UP_COL_ADD_OR_DROP);
 
     memcpy(&old_num_null_bytes, extra_pos, sizeof(uint32_t));
     extra_pos += sizeof(uint32_t);
@@ -420,7 +420,7 @@ static int tokudb_hcad_update_fun(
     extra_pos += sizeof(uint32_t);
 
     max_num_bytes = old_val->size + extra->size + new_len_of_offsets + new_fixed_field_size;
-    new_val_data = (uchar *)tokudb_my_malloc(
+    new_val_data = (uchar *)tokudb::memory::malloc(
         max_num_bytes, 
         MYF(MY_FAE)
         );
@@ -468,7 +468,7 @@ static int tokudb_hcad_update_fun(
         bool is_null_default = false;
         extra_pos++;
 
-        assert(op_type == COL_DROP || op_type == COL_ADD);
+        assert_always(op_type == COL_DROP || op_type == COL_ADD);
         bool nullable = (extra_pos[0] != 0);
         extra_pos++;
         if (nullable) {
@@ -477,11 +477,11 @@ static int tokudb_hcad_update_fun(
             extra_pos += sizeof(uint32_t);
             uint32_t num_bits;
             if (op_type == COL_DROP) {
-                assert(curr_old_null_pos <= null_bit_position);
+                assert_always(curr_old_null_pos <= null_bit_position);
                 num_bits = null_bit_position - curr_old_null_pos;
             }
             else {
-                assert(curr_new_null_pos <= null_bit_position);
+                assert_always(curr_new_null_pos <= null_bit_position);
                 num_bits = null_bit_position - curr_new_null_pos;
             }
             copy_null_bits(
@@ -619,7 +619,7 @@ static int tokudb_hcad_update_fun(
             continue;
         }
         else {
-            assert(false);
+            assert_always(false);
         }
     }
     // finish copying the null stuff
@@ -644,7 +644,7 @@ static int tokudb_hcad_update_fun(
     curr_old_fixed_offset += num_bytes_left;
     curr_new_fixed_offset += num_bytes_left;
     // sanity check
-    assert(curr_new_fixed_offset == new_fixed_field_size);
+    assert_always(curr_new_fixed_offset == new_fixed_field_size);
 
     // finish copying var field stuff
     num_var_fields_to_copy = old_num_var_fields - curr_old_num_var_field;
@@ -664,7 +664,7 @@ static int tokudb_hcad_update_fun(
     curr_new_var_field_offset_ptr += num_offset_bytes_written;
     curr_new_var_field_data_ptr += num_data_bytes_written;
     // sanity check
-    assert(curr_new_var_field_offset_ptr == new_var_field_data_ptr);
+    assert_always(curr_new_var_field_offset_ptr == new_var_field_data_ptr);
 
     // start handling blobs
     get_blob_field_info(
@@ -699,7 +699,7 @@ static int tokudb_hcad_update_fun(
             uint32_t blob_index;
             memcpy(&blob_index, extra_pos, sizeof(blob_index));
             extra_pos += sizeof(blob_index);
-            assert (op_type == COL_DROP || op_type == COL_ADD);
+            assert_always (op_type == COL_DROP || op_type == COL_ADD);
             if (op_type == COL_DROP) {
                 num_blobs_to_copy = blob_index - curr_old_blob;
             }
@@ -754,7 +754,7 @@ static int tokudb_hcad_update_fun(
     
     error = 0;
 cleanup:
-    tokudb_my_free(new_val_data);
+    tokudb::memory::free(new_val_data);
     return error;    
 }
 
@@ -774,7 +774,7 @@ static int tokudb_expand_variable_offsets(
     // decode the operation
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_EXPAND_VARIABLE_OFFSETS);
+    assert_always(operation == UPDATE_OP_EXPAND_VARIABLE_OFFSETS);
 
     // decode number of offsets
     uint32_t number_of_offsets;
@@ -784,18 +784,18 @@ static int tokudb_expand_variable_offsets(
     uint32_t offset_start;
     extra_val.consume(&offset_start, sizeof offset_start);
 
-    assert(extra_val.size() == extra_val.limit());
+    assert_always(extra_val.size() == extra_val.limit());
 
     DBT new_val; memset(&new_val, 0, sizeof new_val);
 
     if (old_val != NULL) {
-        assert(offset_start + number_of_offsets <= old_val->size);
+        assert_always(offset_start + number_of_offsets <= old_val->size);
     
         // compute the new val from the old val
         uchar *old_val_ptr = (uchar *)old_val->data;
 
         // allocate space for the new val's data
-        uchar *new_val_ptr = (uchar *)tokudb_my_malloc(number_of_offsets + old_val->size, MYF(MY_FAE));
+        uchar *new_val_ptr = (uchar *)tokudb::memory::malloc(number_of_offsets + old_val->size, MYF(MY_FAE));
         if (!new_val_ptr) {
             error = ENOMEM;
             goto cleanup;
@@ -822,8 +822,8 @@ static int tokudb_expand_variable_offsets(
         old_val_ptr += n;
         new_val.size = new_val_ptr - (uchar *)new_val.data;
 
-        assert(new_val_ptr == (uchar *)new_val.data + new_val.size);
-        assert(old_val_ptr == (uchar *)old_val->data + old_val->size);
+        assert_always(new_val_ptr == (uchar *)new_val.data + new_val.size);
+        assert_always(old_val_ptr == (uchar *)old_val->data + old_val->size);
 
         // set the new val
         set_val(&new_val, set_extra);
@@ -832,7 +832,7 @@ static int tokudb_expand_variable_offsets(
     error = 0;
 
 cleanup:
-    tokudb_my_free(new_val.data);
+    tokudb::memory::free(new_val.data);
     return error;
 }
 
@@ -851,27 +851,27 @@ static int tokudb_expand_int_field(
 
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_EXPAND_INT || operation == UPDATE_OP_EXPAND_UINT);
+    assert_always(operation == UPDATE_OP_EXPAND_INT || operation == UPDATE_OP_EXPAND_UINT);
     uint32_t the_offset;
     extra_val.consume(&the_offset, sizeof the_offset);
     uint32_t old_length;
     extra_val.consume(&old_length, sizeof old_length);
     uint32_t new_length;
     extra_val.consume(&new_length, sizeof new_length);
-    assert(extra_val.size() == extra_val.limit());
+    assert_always(extra_val.size() == extra_val.limit());
 
-    assert(new_length >= old_length); // expand only
+    assert_always(new_length >= old_length); // expand only
 
     DBT new_val; memset(&new_val, 0, sizeof new_val);
 
     if (old_val != NULL) {
-        assert(the_offset + old_length <= old_val->size); // old field within the old val
+        assert_always(the_offset + old_length <= old_val->size); // old field within the old val
 
         // compute the new val from the old val
         uchar *old_val_ptr = (uchar *)old_val->data;
 
         // allocate space for the new val's data
-        uchar *new_val_ptr = (uchar *)tokudb_my_malloc(old_val->size + (new_length - old_length), MYF(MY_FAE));
+        uchar *new_val_ptr = (uchar *)tokudb::memory::malloc(old_val->size + (new_length - old_length), MYF(MY_FAE));
         if (!new_val_ptr) {
             error = ENOMEM;
             goto cleanup;
@@ -899,7 +899,7 @@ static int tokudb_expand_int_field(
             old_val_ptr += old_length;
             break;
         default:
-            assert(0);
+            assert_always(0);
         }
         
         // copy the rest
@@ -909,8 +909,8 @@ static int tokudb_expand_int_field(
         old_val_ptr += n;
         new_val.size = new_val_ptr - (uchar *)new_val.data;
 
-        assert(new_val_ptr == (uchar *)new_val.data + new_val.size);
-        assert(old_val_ptr == (uchar *)old_val->data + old_val->size);
+        assert_always(new_val_ptr == (uchar *)new_val.data + new_val.size);
+        assert_always(old_val_ptr == (uchar *)old_val->data + old_val->size);
 
         // set the new val
         set_val(&new_val, set_extra);
@@ -919,7 +919,7 @@ static int tokudb_expand_int_field(
     error = 0;
 
 cleanup:
-    tokudb_my_free(new_val.data);
+    tokudb::memory::free(new_val.data);
     return error;
 }
 
@@ -938,7 +938,7 @@ static int tokudb_expand_char_field(
 
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_EXPAND_CHAR || operation == UPDATE_OP_EXPAND_BINARY);
+    assert_always(operation == UPDATE_OP_EXPAND_CHAR || operation == UPDATE_OP_EXPAND_BINARY);
     uint32_t the_offset;
     extra_val.consume(&the_offset, sizeof the_offset);
     uint32_t old_length;
@@ -947,20 +947,20 @@ static int tokudb_expand_char_field(
     extra_val.consume(&new_length, sizeof new_length);
     uchar pad_char;
     extra_val.consume(&pad_char, sizeof pad_char);
-    assert(extra_val.size() == extra_val.limit());
+    assert_always(extra_val.size() == extra_val.limit());
 
-    assert(new_length >= old_length); // expand only
+    assert_always(new_length >= old_length); // expand only
 
     DBT new_val; memset(&new_val, 0, sizeof new_val);
 
     if (old_val != NULL) {
-        assert(the_offset + old_length <= old_val->size); // old field within the old val
+        assert_always(the_offset + old_length <= old_val->size); // old field within the old val
 
         // compute the new val from the old val
         uchar *old_val_ptr = (uchar *)old_val->data;
 
         // allocate space for the new val's data
-        uchar *new_val_ptr = (uchar *)tokudb_my_malloc(old_val->size + (new_length - old_length), MYF(MY_FAE));
+        uchar *new_val_ptr = (uchar *)tokudb::memory::malloc(old_val->size + (new_length - old_length), MYF(MY_FAE));
         if (!new_val_ptr) {
             error = ENOMEM;
             goto cleanup;
@@ -981,7 +981,7 @@ static int tokudb_expand_char_field(
             old_val_ptr += old_length;
             break;
         default:
-            assert(0);
+            assert_always(0);
         }
         
         // copy the rest
@@ -991,8 +991,8 @@ static int tokudb_expand_char_field(
         old_val_ptr += n;
         new_val.size = new_val_ptr - (uchar *)new_val.data;
 
-        assert(new_val_ptr == (uchar *)new_val.data + new_val.size);
-        assert(old_val_ptr == (uchar *)old_val->data + old_val->size);
+        assert_always(new_val_ptr == (uchar *)new_val.data + new_val.size);
+        assert_always(old_val_ptr == (uchar *)old_val->data + old_val->size);
 
         // set the new val
         set_val(&new_val, set_extra);
@@ -1001,7 +1001,7 @@ static int tokudb_expand_char_field(
     error = 0;
 
 cleanup:
-    tokudb_my_free(new_val.data);
+    tokudb::memory::free(new_val.data);
     return error;
 }
 
@@ -1012,14 +1012,14 @@ public:
     var_fields() {
     }
     void init_var_fields(uint32_t var_offset, uint32_t offset_bytes, uint32_t bytes_per_offset, tokudb::buffer *val_buffer) {
-        assert(bytes_per_offset == 0 || bytes_per_offset == 1 || bytes_per_offset == 2);
+        assert_always(bytes_per_offset == 0 || bytes_per_offset == 1 || bytes_per_offset == 2);
         m_var_offset = var_offset;
         m_val_offset = m_var_offset + offset_bytes;
         m_bytes_per_offset = bytes_per_offset;
         if (bytes_per_offset > 0) {
             m_num_fields = offset_bytes / bytes_per_offset;
         } else {
-            assert(offset_bytes == 0);
+            assert_always(offset_bytes == 0);
             m_num_fields = 0;
         }
         m_val_buffer = val_buffer;
@@ -1054,7 +1054,7 @@ void var_fields::write_offset(uint32_t var_index, uint32_t new_offset) {
 
 // Return the offset of the ith variable length field
 uint32_t var_fields::value_offset(uint32_t var_index) {
-    assert(var_index < m_num_fields);
+    assert_always(var_index < m_num_fields);
     if (var_index == 0)
         return m_val_offset;
     else
@@ -1063,7 +1063,7 @@ uint32_t var_fields::value_offset(uint32_t var_index) {
 
 // Return the length of the ith variable length field
 uint32_t var_fields::value_length(uint32_t var_index) {
-    assert(var_index < m_num_fields);
+    assert_always(var_index < m_num_fields);
     if (var_index == 0)
         return read_offset(0);
     else
@@ -1072,7 +1072,7 @@ uint32_t var_fields::value_length(uint32_t var_index) {
 
 // The length of the ith variable length fields changed.  Update all of the subsequent offsets.
 void var_fields::update_offsets(uint32_t var_index, uint32_t old_s, uint32_t new_s) {
-    assert(var_index < m_num_fields);
+    assert_always(var_index < m_num_fields);
     if (old_s == new_s)
         return;
     for (uint i = var_index; i < m_num_fields; i++) {
@@ -1137,7 +1137,7 @@ void blob_fields::write_length(uint32_t offset, size_t size, uint32_t new_length
 }
 
 uint32_t blob_fields::blob_offset(uint32_t blob_index) {
-    assert(blob_index < m_num_blobs);
+    assert_always(blob_index < m_num_blobs);
     uint32_t offset = m_blob_offset;
     for (uint i = 0; i < blob_index; i++) {
         uint32_t blob_length = m_blob_lengths[i];
@@ -1148,7 +1148,7 @@ uint32_t blob_fields::blob_offset(uint32_t blob_index) {
 }
 
 void blob_fields::replace(uint32_t blob_index, uint32_t new_length, void *new_value) {
-    assert(blob_index < m_num_blobs);
+    assert_always(blob_index < m_num_blobs);
 
     // compute the ith blob offset
     uint32_t offset = blob_offset(blob_index);
@@ -1165,8 +1165,8 @@ void blob_fields::replace(uint32_t blob_index, uint32_t new_length, void *new_va
 }
 
 void blob_fields::expand_length(uint32_t blob_index, uint8_t old_length_length, uint8_t new_length_length) {
-    assert(blob_index < m_num_blobs);
-    assert(old_length_length == m_blob_lengths[blob_index]);
+    assert_always(blob_index < m_num_blobs);
+    assert_always(old_length_length == m_blob_lengths[blob_index]);
 
     // compute the ith blob offset
     uint32_t offset = blob_offset(blob_index);
@@ -1250,9 +1250,9 @@ private:
 // Update an int field: signed newval@offset = old_val@offset OP extra_val
 void value_map::int_op(uint32_t operation, uint32_t the_offset, uint32_t length, uint32_t field_null_num,
                               tokudb::buffer &old_val, void *extra_val) {
-    assert(the_offset + length <= m_val_buffer->size());
-    assert(the_offset + length <= old_val.size());
-    assert(length == 1 || length == 2 || length == 3 || length == 4 || length == 8);
+    assert_always(the_offset + length <= m_val_buffer->size());
+    assert_always(the_offset + length <= old_val.size());
+    assert_always(length == 1 || length == 2 || length == 3 || length == 4 || length == 8);
 
     uchar *old_val_ptr = (uchar *) old_val.data();
     bool field_is_null = is_null(field_null_num, old_val_ptr);
@@ -1290,16 +1290,16 @@ void value_map::int_op(uint32_t operation, uint32_t the_offset, uint32_t length,
         }
         break;
     default:
-        assert(0);
+        assert_always(0);
     }
 }
 
 // Update an unsigned field: unsigned newval@offset = old_val@offset OP extra_val
 void value_map::uint_op(uint32_t operation, uint32_t the_offset, uint32_t length, uint32_t field_null_num,
                                tokudb::buffer &old_val, void *extra_val) {
-    assert(the_offset + length <= m_val_buffer->size());
-    assert(the_offset + length <= old_val.size());
-    assert(length == 1 || length == 2 || length == 3 || length == 4 || length == 8);
+    assert_always(the_offset + length <= m_val_buffer->size());
+    assert_always(the_offset + length <= old_val.size());
+    assert_always(length == 1 || length == 2 || length == 3 || length == 4 || length == 8);
 
     uchar *old_val_ptr = (uchar *) old_val.data();
     bool field_is_null = is_null(field_null_num, old_val_ptr);
@@ -1329,7 +1329,7 @@ void value_map::uint_op(uint32_t operation, uint32_t the_offset, uint32_t length
         }
         break;
     default:
-        assert(0);
+        assert_always(0);
     }
 }
 
@@ -1351,13 +1351,13 @@ void value_map::expand_blob_lengths(uint32_t num_blob, const uint8_t *old_length
 static uint32_t consume_uint32(tokudb::buffer &b) {
     uint32_t n;
     size_t s = b.consume_ui<uint32_t>(&n);
-    assert(s > 0);
+    assert_always(s > 0);
     return n;
 }
 
 static uint8_t *consume_uint8_array(tokudb::buffer &b, uint32_t array_size) {
     uint8_t *p = (uint8_t *) b.consume_ptr(array_size);
-    assert(p);
+    assert_always(p);
     return p;
 }
 
@@ -1374,7 +1374,7 @@ static int tokudb_expand_blobs(
     
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_EXPAND_BLOB);
+    assert_always(operation == UPDATE_OP_EXPAND_BLOB);
 
     if (old_val_dbt != NULL) {
         // new val = old val
@@ -1393,7 +1393,7 @@ static int tokudb_expand_blobs(
         uint32_t num_blob = consume_uint32(extra_val);
         const uint8_t *old_blob_length = consume_uint8_array(extra_val, num_blob);
         const uint8_t *new_blob_length = consume_uint8_array(extra_val, num_blob);
-        assert(extra_val.size() == extra_val.limit());
+        assert_always(extra_val.size() == extra_val.limit());
 
         // expand blob lengths
         vd.expand_blob_lengths(num_blob, old_blob_length, new_blob_length);
@@ -1446,14 +1446,14 @@ static void apply_1_updates(tokudb::value_map &vd, tokudb::buffer &new_val, toku
             if (update_operation == '=')
                 vd.replace_fixed(the_offset, field_null_num, extra_val_ptr, extra_val_length);
             else 
-                assert(0);
+                assert_always(0);
             break;
         default:
-            assert(0);
+            assert_always(0);
             break;
         }
     }
-    assert(extra_val.size() == extra_val.limit());
+    assert_always(extra_val.size() == extra_val.limit());
 }
 
 // Simple update handler. Decode the update message, apply the update operations to the old value, and set the new value.
@@ -1470,7 +1470,7 @@ static int tokudb_update_1_fun(
     
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_UPDATE_1);
+    assert_always(operation == UPDATE_OP_UPDATE_1);
 
     if (old_val_dbt != NULL) {
         // get the simple descriptor
@@ -1520,7 +1520,7 @@ static int tokudb_upsert_1_fun(
 
     uint8_t operation;
     extra_val.consume(&operation, sizeof operation);
-    assert(operation == UPDATE_OP_UPSERT_1);
+    assert_always(operation == UPDATE_OP_UPSERT_1);
 
     uint32_t insert_length;
     extra_val.consume(&insert_length, sizeof insert_length);
@@ -1584,7 +1584,7 @@ static void apply_2_updates(tokudb::value_map &vd, tokudb::buffer &new_val, toku
             uint32_t field_null_num = consume_uint32(extra_val);
             uint32_t the_offset = consume_uint32(extra_val);
             uint32_t extra_val_length = consume_uint32(extra_val);
-            void *extra_val_ptr = extra_val.consume_ptr(extra_val_length); assert(extra_val_ptr);
+            void *extra_val_ptr = extra_val.consume_ptr(extra_val_length); assert_always(extra_val_ptr);
 
             switch (field_type) {
             case UPDATE_TYPE_INT:
@@ -1604,29 +1604,29 @@ static void apply_2_updates(tokudb::value_map &vd, tokudb::buffer &new_val, toku
                 if (update_operation == '=')
                     vd.replace_fixed(the_offset, field_null_num, extra_val_ptr, extra_val_length);
                 else 
-                    assert(0);
+                    assert_always(0);
                 break;
             case UPDATE_TYPE_VARBINARY:
             case UPDATE_TYPE_VARCHAR:
                 if (update_operation == '=') 
                     vd.replace_varchar(the_offset, field_null_num, extra_val_ptr, extra_val_length);
                 else
-                    assert(0);
+                    assert_always(0);
                 break;
             case UPDATE_TYPE_TEXT:
             case UPDATE_TYPE_BLOB: 
                 if (update_operation == '=')
                     vd.replace_blob(the_offset, field_null_num, extra_val_ptr, extra_val_length);
                 else
-                    assert(0);
+                    assert_always(0);
                 break;
             default:
-                assert(0);
+                assert_always(0);
                 break;
             }
         }
     }
-    assert(extra_val.size() == extra_val.limit());
+    assert_always(extra_val.size() == extra_val.limit());
 }
 
 // Simple update handler. Decode the update message, apply the update operations to the old value, and set the new value.
@@ -1643,7 +1643,7 @@ static int tokudb_update_2_fun(
     
     uint8_t op;
     extra_val.consume(&op, sizeof op);
-    assert(op == UPDATE_OP_UPDATE_2);
+    assert_always(op == UPDATE_OP_UPDATE_2);
 
     if (old_val_dbt != NULL) {
         tokudb::buffer old_val(old_val_dbt->data, old_val_dbt->size, old_val_dbt->size);
@@ -1682,11 +1682,11 @@ static int tokudb_upsert_2_fun(
 
     uint8_t op;
     extra_val.consume(&op, sizeof op);
-    assert(op == UPDATE_OP_UPSERT_2);
+    assert_always(op == UPDATE_OP_UPSERT_2);
 
     uint32_t insert_length = consume_uint32(extra_val);
-    assert(insert_length < extra_val.limit());
-    void *insert_row = extra_val.consume_ptr(insert_length); assert(insert_row);
+    assert_always(insert_length < extra_val.limit());
+    void *insert_row = extra_val.consume_ptr(insert_length); assert_always(insert_row);
 
     if (old_val_dbt == NULL) {
         // insert a new row
@@ -1728,7 +1728,7 @@ int tokudb_update_fun(
     void *set_extra
     ) 
 {
-    assert(extra->size > 0);
+    assert_always(extra->size > 0);
     uint8_t *extra_pos = (uchar *)extra->data;
     uint8_t operation = extra_pos[0];
     int error;
@@ -1763,7 +1763,7 @@ int tokudb_update_fun(
         error = tokudb_upsert_2_fun(db, key, old_val, extra, set_val, set_extra);
         break;
     default:
-        assert(0);
+        assert_always(0);
         error = EINVAL;
         break;
     }

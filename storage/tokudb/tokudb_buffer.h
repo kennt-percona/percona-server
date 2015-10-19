@@ -23,9 +23,12 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #ident "Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved."
 
-#if !defined(_TOKUDB_BUFFER_H)
+#ifndef _TOKUDB_BUFFER_H
 #define _TOKUDB_BUFFER_H
 
+#include "hatoku_defines.h"
+#include "tokudb_debug.h"
+#include "tokudb_thread.h"
 #include "tokudb_vlq.h"
 
 namespace tokudb {
@@ -93,32 +96,32 @@ public:
 
     // Write p_length bytes at an offset in the buffer
     void write(void *p, size_t p_length, size_t offset) {
-        assert(offset + p_length <= m_size);
+        assert_always(offset + p_length <= m_size);
         memcpy((char *)m_data + offset, p, p_length);
     }
 
     // Read p_length bytes at an offset in the buffer
     void read(void *p, size_t p_length, size_t offset) {
-        assert(offset + p_length <= m_size);
+        assert_always(offset + p_length <= m_size);
         memcpy(p, (char *)m_data + offset, p_length);
     }
 
     // Replace a field in the buffer with new data.  If the new data size is different, then readjust the 
     // size of the buffer and move things around.
     void replace(size_t offset, size_t old_s, void *new_p, size_t new_s) {
-        assert(offset + old_s <= m_size);
+        assert_always(offset + old_s <= m_size);
         if (new_s > old_s)
             maybe_realloc(new_s - old_s);
         char *data_offset = (char *) m_data + offset;
         if (new_s != old_s) {
             size_t n = m_size - (offset + old_s);
-            assert(offset + new_s + n <= m_limit && offset + old_s + n <= m_limit);
+            assert_always(offset + new_s + n <= m_limit && offset + old_s + n <= m_limit);
             memmove(data_offset + new_s, data_offset + old_s, n);
             if (new_s > old_s)
                 m_size += new_s - old_s;
             else
                 m_size -= old_s - new_s;
-            assert(m_size <= m_limit);
+            assert_always(m_size <= m_limit);
         }
         memcpy(data_offset, new_p, new_s);
     }
@@ -145,9 +148,9 @@ private:
             size_t new_limit = m_limit * 2;
             if (new_limit < m_size + s)
                 new_limit = m_size + s;
-            assert(!m_is_static);
+            assert_always(!m_is_static);
             void *new_data = realloc(m_data, new_limit);
-            assert(new_data != NULL);
+            assert_always(new_data != NULL);
             m_data = new_data;
             m_limit = new_limit;
         }
