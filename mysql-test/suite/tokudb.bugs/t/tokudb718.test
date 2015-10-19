@@ -1,6 +1,7 @@
 # test DB-718, a crash caused by broken error handling in tokudb's fractal_tree_info information schema
 source include/have_tokudb.inc;
 set default_storage_engine='tokudb';
+set session tokudb_prelock_empty=TRUE;
 disable_warnings;
 drop table if exists t;
 enable_warnings;
@@ -9,4 +10,5 @@ begin;
 insert into t values (1),(2);
 select dictionary_name from information_schema.tokudb_fractal_tree_info;
 commit;
+set session tokudb_prelock_empty=DEFAULT;
 drop table t;

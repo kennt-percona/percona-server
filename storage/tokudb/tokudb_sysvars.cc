@@ -405,7 +405,7 @@ static MYSQL_THDVAR_UINT(pk_insert_mode,
 
 static MYSQL_THDVAR_BOOL(prelock_empty,
     0, "Tokudb Prelock Empty Table",
-    NULL, NULL, true);
+    NULL, NULL, FALSE);
 
 static MYSQL_THDVAR_UINT(read_block_size,
     0, "fractal tree read block size",

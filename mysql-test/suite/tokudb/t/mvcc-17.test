@@ -11,12 +11,14 @@ DROP TABLE IF EXISTS foo;
 --enable_warnings
 
 connection default;
+set session tokudb_prelock_empty=TRUE;
 set session tokudb_load_save_space=0;
 set session transaction isolation level repeatable read;
 create table foo (a int)engine=TokuDB;
 show create table foo;
 
 connection conn1;
+set session tokudb_prelock_empty=TRUE;
 set session tokudb_load_save_space=0;
 set session transaction isolation level repeatable read;
 begin;
@@ -51,4 +53,5 @@ disconnect conn1;
 connection default;
 # Final cleanup.
 set session transaction isolation level serializable;
+set session tokudb_prelock_empty=DEFAULT;
 DROP TABLE foo;

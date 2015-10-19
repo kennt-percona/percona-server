@@ -17,11 +17,13 @@ insert into t values (1,repeat('a',32*1024*1024-4));
 select id,length(v) from t;
 id	length(v)
 1	33554428
+set session tokudb_prelock_empty=TRUE;
 truncate table t;
 insert into t values (1,'a'),(2,'b'),(3,'c'),(4,'d'),(5,repeat('e',32*1024*1024-1));
 ERROR HY000: Got error 22 from storage engine
 select id,length(v) from t;
 id	length(v)
+set session tokudb_prelock_empty=FALSE;
 truncate table t;
 insert into t values (1,'a'),(2,'b'),(3,'c'),(4,'d');
 insert into t values (5,repeat('e',32*1024*1024-1));

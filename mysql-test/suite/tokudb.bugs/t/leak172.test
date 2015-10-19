@@ -4,6 +4,7 @@
 source include/have_tokudb.inc;
 source include/have_debug.inc;
 set default_storage_engine=tokudb;
+set session tokudb_prelock_empty=TRUE;
 
 disable_warnings;
 drop table if exists t1,t2;
@@ -135,6 +136,7 @@ LOAD DATA INFILE 'leak172_t1.data' INTO TABLE `t1` fields terminated by ',';
 
 connect(conn1,localhost,root,,);
 set session debug="+d,tokudb_end_bulk_insert_sleep";
+set session tokudb_prelock_empty=TRUE;
 send LOAD DATA INFILE 'leak172_t2.data' INTO TABLE `t2` fields terminated by ',';
 
 connection default;
@@ -149,4 +151,5 @@ reap;
 connection default;
 disconnect conn1;
 
+set session tokudb_prelock_empty=DEFAULT;
 drop table t1,t2;

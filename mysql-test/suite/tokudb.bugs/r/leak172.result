@@ -1,4 +1,5 @@
 set default_storage_engine=tokudb;
+set session tokudb_prelock_empty=TRUE;
 drop table if exists t1,t2;
 CREATE TABLE `t1` (
 `c4` int(11) DEFAULT NULL,
@@ -118,7 +119,9 @@ KEY `c31` (`c31`)
 );
 LOAD DATA INFILE 'leak172_t1.data' INTO TABLE `t1` fields terminated by ',';
 set session debug="+d,tokudb_end_bulk_insert_sleep";
+set session tokudb_prelock_empty=TRUE;
 LOAD DATA INFILE 'leak172_t2.data' INTO TABLE `t2` fields terminated by ',';
 UPDATE t1, t2 SET t1.`c5` = 4 WHERE t1.`c6` <= 'o';
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
+set session tokudb_prelock_empty=DEFAULT;
 drop table t1,t2;
