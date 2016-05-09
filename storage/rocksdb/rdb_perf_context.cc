@@ -232,6 +232,7 @@ void Rdb_perf_counters::load(const Rdb_atomic_perf_counters &atomic_counters)
   }
 }
 
+#ifndef PERCONA_SERVER
 void Rdb_io_perf::start(uint32_t perf_context_level)
 {
   rocksdb::PerfLevel perf_level=
@@ -301,5 +302,5 @@ void Rdb_io_perf::end_and_record(uint32_t perf_context_level)
     m_stats->delete_skipped += m_local_perf_context.m_value[PC_DELETE_SKIPPED];
   }
 }
-
+#endif // ifndef PERCONA_SERVER
 }  // namespace myrocks

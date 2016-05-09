@@ -138,7 +138,9 @@ typedef struct st_rocksdb_share {
   THR_LOCK lock;
 
   /* Stores cumulative table statistics */
+#ifndef PERCONA_SERVER
   my_io_perf_atomic_t io_perf_read;
+#endif // !PERCONA_SERVER
   Rdb_atomic_perf_counters table_perf_context;
 } ROCKSDB_SHARE;
 
@@ -658,6 +660,10 @@ public:
   int index_read_last_map(uchar * buf, const uchar * key,
                           key_part_map keypart_map)
     __attribute__((__warn_unused_result__));;
+#ifdef PERCONA_SERVER
+  bool is_using_full_key(key_part_map keypart_map,
+                         uint actual_key_parts);
+#endif // !PERCONA_SERVER
 
   int read_range_first(const key_range *start_key,
                        const key_range *end_key,
@@ -913,3 +919,45 @@ struct Rdb_inplace_alter_ctx : public my_core::inplace_alter_handler_ctx
 };
 
 }  // namespace myrocks
+
+#ifdef PERCONA_SERVER
+/*
+  The intent behind a SHIP_ASSERT() macro is to have a mechanism for validating
+  invariants in retail builds. Traditionally assertions (such as macros defined
+  in <cassert>) are evaluated for performance reasons only in debug builds and
+  become NOOP in retail builds when NDEBUG is defined.
+
+  This macro is intended to validate the invariants which are critical for
+  making sure that data corruption and data loss won't take place. Proper
+  intended usage can be described as "If a particular condition is not true then
+  stop everything what's going on and terminate the process because continued
+  execution will cause really bad things to happen".
+
+  Use the power of SHIP_ASSERT() wisely.
+*/
+#define abort_with_stack_traces() abort()
+#define SHIP_ASSERT(expr)                                               \
+  do {                                                                  \
+    if (!(expr)) {                                                      \
+      my_safe_printf_stderr("\nShip assert failure: \'%s\'\n", #expr);  \
+      abort_with_stack_traces();                                        \
+    }                                                                   \
+  } while (0)                                                           \
+
+String timeout_message(const char *command, const char *name1,
+                       const char *name2);
+
+bool is_table_in_list(const std::string& table_name,
+                      const std::vector<std::string>& table_list,
+                      mysql_rwlock_t* lock);
+
+bool can_hold_read_locks_on_select(THD *thd, thr_lock_type lock_type);
+
+bool can_hold_locks_on_trans(THD *thd, thr_lock_type lock_type);
+
+
+std::vector<std::string> split(const std::string& input, char delimiter);
+
+#endif // PERCONA_SERVER
+
+

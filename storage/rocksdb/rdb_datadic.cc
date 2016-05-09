@@ -452,7 +452,12 @@ uint Rdb_key_def::pack_index_tuple(TABLE *tbl, uchar *pack_buffer,
 
   /* We were given a record in KeyTupleFormat. First, save it to record */
   uint key_len= calculate_key_len(tbl, m_keyno, key_tuple, keypart_map);
+#ifdef PERCONA_SERVER
+  key_restore(tbl->record[0], const_cast<uchar*>(key_tuple),
+              &tbl->key_info[m_keyno], key_len);
+#else
   key_restore(tbl->record[0], key_tuple, &tbl->key_info[m_keyno], key_len);
+#endif // PERCONA_SERVER
 
   uint n_used_parts= my_count_bits(keypart_map);
   if (keypart_map == HA_WHOLE_KEY)
@@ -984,8 +989,13 @@ void Rdb_key_def::report_checksum_mismatch(bool is_key, const char *data,
 
   buf = rdb_hexdump(data, data_size, 1000);
   // NO_LINT_DEBUG
+#ifdef PERCONA_SERVER
+  sql_print_error("Data with incorrect checksum (%llu bytes): %s",
+                  (uint64_t)data_size, buf.c_str());
+#else
   sql_print_error("Data with incorrect checksum (%" PRIu64 " bytes): %s",
                   (uint64_t)data_size, buf.c_str());
+#endif
 
   my_error(ER_INTERNAL_ERROR, MYF(0), "Record checksum mismatch");
 }

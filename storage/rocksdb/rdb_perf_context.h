@@ -131,21 +131,28 @@ class Rdb_perf_context_guard
   }
 };
 
+#ifdef PERCONA_SERVER
 /*
   Perf timers for data reads
  */
 class Rdb_io_perf
 {
-  // Read counters
-  uint64_t m_block_read_byte= 0;
-  uint64_t m_block_read_count= 0;
-  uint64_t m_block_read_time= 0;
+ public:
+  void init(Rdb_atomic_perf_counters *atomic_counters,
+            void *shared_io_perf_read,
+            ha_statistics *stats) {}
 
-  // Context management
-  Rdb_perf_counters m_local_perf_context;
-  Rdb_atomic_perf_counters *m_atomic_counters= nullptr;
-  my_io_perf_atomic_t *m_shared_io_perf_read= nullptr;
-  ha_statistics *m_stats= nullptr;
+  void start(uint32_t perf_context_level) {}
+  void end_and_record(uint32_t perf_context_level) {}
+};
+
+#else
+
+/*
+  Perf timers for data reads
+ */
+class Rdb_io_perf
+{
 
  public:
   void init(Rdb_atomic_perf_counters *atomic_counters,
@@ -164,6 +171,8 @@ class Rdb_io_perf
   void start(uint32_t perf_context_level);
   void end_and_record(uint32_t perf_context_level);
 };
+
+#endif // PERCONA_SERVER
 
 // RAII utility to automatically call stop/start on scope entry/exit
 // for a given Rdb_io_perf object.

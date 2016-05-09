@@ -1289,7 +1289,9 @@ class Rdb_transaction
 public:
   const char* m_mysql_log_file_name;
   my_off_t m_mysql_log_offset;
+#ifdef PERCONA_SERVER
   const char* m_mysql_gtid;
+#endif // PERCONA_SERVER
   String m_detailed_error;
 
   static void init_mutex()
@@ -1413,11 +1415,19 @@ public:
     }
     else
     {
+#ifdef PERCONA_SERVER
+      my_core::thd_binlog_pos(m_thd, &m_mysql_log_file_name,
+                              &m_mysql_log_offset);
+      binlog_manager.update(m_mysql_log_file_name,
+                            m_mysql_log_offset,
+                            NULL, m_rocksdb_tx->GetWriteBatch());
+#else
       my_core::thd_binlog_pos(m_thd, &m_mysql_log_file_name,
                               &m_mysql_log_offset, &m_mysql_gtid);
       binlog_manager.update(m_mysql_log_file_name,
                             m_mysql_log_offset,
                             m_mysql_gtid, m_rocksdb_tx->GetWriteBatch());
+#endif // PERCONA_SERVER
       return commit_no_binlog();
     }
   }
@@ -1859,6 +1869,11 @@ static int rocksdb_close_connection(handlerton* hton, THD* thd)
   return 0;
 }
 
+#ifdef PERCONA_SERVER
+static int rocksdb_prepare(handlerton* hton, THD* thd, bool all) {
+    return 0;
+}
+#else
 /**
   Doing nothing at prepare() on master. But defining handler::prepare() is
   needed for Xid binlog event to be written at commit.
@@ -1888,6 +1903,7 @@ static int rocksdb_prepare(handlerton* hton, THD* thd, bool prepare_tx,
 
   return 0;
 }
+#endif // PERCONA_SERVER
 
 /**
  do nothing for prepare/commit by xid
@@ -1903,6 +1919,7 @@ static int rocksdb_rollback_by_xid(handlerton* hton,	XID* xid)
   return 0;
 }
 
+#ifndef PERCONA_SERVER
 /**
   Reading last committed binary log info from RocksDB system row.
   The info is needed for crash safe slave/master to work.
@@ -1932,8 +1949,41 @@ static int rocksdb_recover(handlerton* hton, XID* xid_list, uint len,
   }
   return 0;
 }
+#endif // !PERCONA_SERVER
 
+#ifdef PERCONA_SERVER
+static int rocksdb_commit(handlerton* hton, THD* thd, bool)
+{
+  DBUG_ENTER("rocksdb_commit");
 
+  Rdb_perf_context_guard guard(rocksdb_perf_context_level != rocksdb::kDisable);
+
+  /* note: h->external_lock(F_UNLCK) is called after this function is called) */
+
+  Rdb_transaction*& tx= get_tx_from_thd(thd);
+  if (tx != nullptr)
+  {
+    if (!my_core::thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN))
+    {
+      /*
+        We get here
+         - For a COMMIT statement that finishes a multi-statement transaction
+         - For a statement that has its own transaction
+      */
+      if (tx->commit())
+        DBUG_RETURN(HA_ERR_INTERNAL_ERROR);
+    }
+
+    if (my_core::thd_tx_isolation(thd) <= ISO_READ_COMMITTED)
+    {
+      // For READ_COMMITTED, we release any existing snapshot so that we will
+      // see any changes that occurred since the last statement.
+      tx->release_snapshot();
+    }
+  }
+  DBUG_RETURN(0);
+}
+#else
 static int rocksdb_commit(handlerton* hton, THD* thd, bool commit_tx, bool)
 {
   DBUG_ENTER("rocksdb_commit");
@@ -1976,7 +2026,7 @@ static int rocksdb_commit(handlerton* hton, THD* thd, bool commit_tx, bool)
   }
   DBUG_RETURN(0);
 }
-
+#endif // PERCONA_SERVER
 
 static int rocksdb_rollback(handlerton* hton, THD* thd, bool rollback_tx)
 {
@@ -2239,11 +2289,13 @@ static bool rocksdb_show_status(handlerton*		hton,
     str.append(buf);
     res |= print_stats(thd, "Memory_Stats", "rocksdb", str, stat_print);
   }
+#ifndef PERCONA_SERVER
   else if (stat_type == HA_ENGINE_TRX)
   {
     /* Handle the SHOW ENGINE ROCKSDB TRANSACTION STATUS command */
     res |= rocksdb_show_snapshot_status(hton, thd, stat_print);
   }
+#endif // !PERCONA_SERVER
 
   return res;
 }
@@ -2258,7 +2310,7 @@ static inline void rocksdb_register_tx(handlerton *hton, THD *thd,
     trans_register_ha(thd, TRUE, rocksdb_hton);
   }
 }
-
+#ifndef PERCONA_SERVER
 /*
     Supporting START TRANSACTION WITH CONSISTENT [ROCKSDB] SNAPSHOT
 
@@ -2323,7 +2375,7 @@ static int rocksdb_start_tx_and_assign_read_view(
 
   return 0;
 }
-
+#endif // !PERCONA_SERVER
 /* Dummy SAVEPOINT support. This is needed for long running transactions
  * like mysqldump (https://bugs.mysql.com/bug.php?id=71017).
  * Current SAVEPOINT does not correctly handle ROLLBACK and does not return
@@ -2347,6 +2399,7 @@ static bool rocksdb_rollback_to_savepoint_can_release_mdl(handlerton *hton,
   return true;
 }
 
+#ifndef PERCONA_SERVER
 /*
   This is called for INFORMATION_SCHEMA
 */
@@ -2433,7 +2486,7 @@ static void rocksdb_update_table_stats(
           rocksdb_hton_name);
   }
 }
-
+#endif // !PERCONA_SERVER
 
 static rocksdb::Status check_rocksdb_options_compatibility(
         const char *dbpath,
@@ -2524,18 +2577,24 @@ static int rocksdb_init_func(void *p)
   rocksdb_hton->prepare=   rocksdb_prepare;
   rocksdb_hton->commit_by_xid=   rocksdb_commit_by_xid;
   rocksdb_hton->rollback_by_xid=   rocksdb_rollback_by_xid;
+#ifndef PERCONA_SERVER
   rocksdb_hton->recover=   rocksdb_recover;
+#endif // !PERCONA_SERVER
   rocksdb_hton->commit=   rocksdb_commit;
   rocksdb_hton->rollback= rocksdb_rollback;
   rocksdb_hton->db_type=  DB_TYPE_ROCKSDB;
   rocksdb_hton->show_status= rocksdb_show_status;
+#ifndef PERCONA_SERVER
   rocksdb_hton->start_consistent_snapshot=
     rocksdb_start_tx_and_assign_read_view;
+#endif // !PERCONA_SERVER
   rocksdb_hton->savepoint_set= rocksdb_savepoint;
   rocksdb_hton->savepoint_rollback= rocksdb_rollback_to_savepoint;
   rocksdb_hton->savepoint_rollback_can_release_mdl=
     rocksdb_rollback_to_savepoint_can_release_mdl;
+#ifndef PERCONA_SERVER
   rocksdb_hton->update_table_stats = rocksdb_update_table_stats;
+#endif // !PERCONA_SERVER
 
   rocksdb_hton->flags= HTON_TEMPORARY_NOT_SUPPORTED |
                        HTON_SUPPORTS_EXTENDED_KEYS |
@@ -2674,8 +2733,13 @@ static int rocksdb_init_func(void *p)
 
     sql_print_information("  cf=%s", cf_names[i].c_str());
     sql_print_information("    write_buffer_size=%ld", opts.write_buffer_size);
+#ifdef PERCONA_SERVER
+    sql_print_information("    target_file_size_base=%llu",
+                          opts.target_file_size_base);
+#else
     sql_print_information("    target_file_size_base=%" PRIu64,
                           opts.target_file_size_base);
+#endif // PERCONA_SERVER
 
     /*
       Temporarily disable compactions to prevent a race condition where
@@ -2691,6 +2755,7 @@ static int rocksdb_init_func(void *p)
 
   rocksdb::Options main_opts(db_options, rocksdb_cf_options_map.get_defaults());
 
+#ifndef PERCONA_SERVER
   /*
     Flashcache configuration:
     When running on Flashcache, mysqld opens Flashcache device before
@@ -2716,6 +2781,7 @@ static int rocksdb_init_func(void *p)
                           "writer threads, fd %d", cachedev_fd);
     main_opts.env= flashcache_aware_env.get();
   }
+#endif // !PERCONA_SERVER
 
   main_opts.env->SetBackgroundThreads(main_opts.max_background_flushes,
                                       rocksdb::Env::Priority::HIGH);
@@ -2944,7 +3010,9 @@ static ROCKSDB_SHARE *get_share(const char *table_name, TABLE *table)
     thr_lock_init(&share->lock);
     //mysql_mutex_init(ex_key_mutex_ROCKSDB_SHARE_mutex,
     //                 &share->mutex, MY_MUTEX_INIT_FAST);
+#ifndef PERCONA_SERVER
     my_io_perf_atomic_init(&share->io_perf_read);
+#endif // !PERCONA_SERVER
   }
   share->use_count++;
   mysql_mutex_unlock(&rocksdb_mutex);
@@ -3704,7 +3772,9 @@ int ha_rocksdb::open(const char *name, int mode, uint test_if_locked)
     DBUG_RETURN(HA_ERR_INTERNAL_ERROR);
   thr_lock_data_init(&share->lock, &lock, nullptr);
 
+#ifndef PERCONA_SERVER
   m_io_perf.init(&share->table_perf_context, &share->io_perf_read, &stats);
+#endif // !PERCONA_SERVER
 
   /*
     note: pk_descr may be non-NULL here, when using partitions. It seems,
@@ -4740,7 +4810,9 @@ int ha_rocksdb::secondary_index_read(const int keyno, uchar *buf)
   DBUG_ASSERT(buf != nullptr);
   DBUG_ASSERT(table != nullptr);
 
+#ifndef PERCONA_SERVER
   stats.rows_requested++;
+#endif // !PERCONA_SERVER
 
   /* Use STATUS_NOT_FOUND when record not found or some error occurred */
   table->status= STATUS_NOT_FOUND;
@@ -4778,8 +4850,10 @@ int ha_rocksdb::secondary_index_read(const int keyno, uchar *buf)
       if (!rc)
       {
         table->status= 0;
+#ifndef PERCONA_SERVER
         stats.rows_read++;
         stats.rows_index_next++;
+#endif // !PERCONA_SERVER
         update_row_stats(ROWS_READ);
       }
       return rc;
@@ -4811,6 +4885,7 @@ int ha_rocksdb::read_range_first(const key_range *start_key,
     result= ha_index_first(table->record[0]);
   else
   {
+#ifndef PERCONA_SERVER
     if (is_using_prohibited_gap_locks(table,
                                       is_using_full_primary_key(
                                         active_index,
@@ -4819,6 +4894,7 @@ int ha_rocksdb::read_range_first(const key_range *start_key,
     {
       DBUG_RETURN(HA_ERR_LOCK_DEADLOCK);
     }
+#endif // !PERCONA_SERVER
 
     MYSQL_TABLE_IO_WAIT(m_psi, PSI_TABLE_FETCH_ROW, active_index, 0,
       { result= index_read_map_impl(table->record[0],
@@ -4887,7 +4963,9 @@ int ha_rocksdb::index_read_map_impl(uchar *buf, const uchar *key,
 
   /* By default, we don't need the retrieved records to match the prefix */
   sec_key_match_prefix= nullptr;
+#ifndef PERCONA_SERVER
   stats.rows_requested++;
+#endif // !PERCONA_SERVER
 
   Rdb_io_perf_guard io_guard(&m_io_perf, rocksdb_perf_context_level);
 
@@ -4903,8 +4981,10 @@ int ha_rocksdb::index_read_map_impl(uchar *buf, const uchar *key,
     rc= get_row_by_rowid(buf, pk_packed_tuple, size);
     if (!rc)
     {
+#ifndef PERCONA_SERVER
       stats.rows_read++;
       stats.rows_index_first++;
+#endif // !PERCONA_SERVER
       update_row_stats(ROWS_READ);
     }
     DBUG_RETURN(rc);
@@ -5029,8 +5109,10 @@ int ha_rocksdb::index_read_map_impl(uchar *buf, const uchar *key,
   else
   {
     table->status= 0;
+#ifndef PERCONA_SERVER
     stats.rows_read++;
     stats.rows_index_first++;
+#endif // !PERCONA_SERVER
     update_row_stats(ROWS_READ);
   }
   DBUG_RETURN(rc);
@@ -5136,6 +5218,16 @@ int ha_rocksdb::index_read_last_map(uchar * buf, const uchar * key,
 {
   return index_read_map(buf, key, keypart_map, HA_READ_PREFIX_LAST);
 }
+
+#ifdef PERCONA_SERVER
+bool ha_rocksdb::is_using_full_key(key_part_map keypart_map,
+                                   uint actual_key_parts)
+{
+  return (keypart_map == HA_WHOLE_KEY) ||
+         (keypart_map == ((key_part_map(1) << actual_key_parts)
+                        - 1));
+}
+#endif // PERCONA_SERVER
 
 
 int ha_rocksdb::check(THD* thd, HA_CHECK_OPT* check_opt)
@@ -5587,12 +5679,14 @@ int ha_rocksdb::index_first_intern(uchar *buf)
 
   if (!rc)
   {
+#ifndef PERCONA_SERVER
     /*
       index_next is always incremented on success, so decrement if it is
       index_first instead
      */
     stats.rows_index_first++;
     stats.rows_index_next--;
+#endif // !PERCONA_SERVER
   }
   DBUG_RETURN(rc);
 }
@@ -5718,12 +5812,14 @@ int ha_rocksdb::index_last_intern(uchar *buf)
 
   if (!rc)
   {
+#ifndef PERCONA_SERVER
     /*
       index_next is always incremented on success, so decrement if it is
       index_first instead
      */
     stats.rows_index_first++;
     stats.rows_index_next--;
+#endif // !PERCONA_SERVER
   }
   DBUG_RETURN(rc);
 }
@@ -5852,7 +5948,9 @@ int ha_rocksdb::write_row(uchar *buf)
 
   if (rv == 0)
   {
+#ifndef PERCONA_SERVER
     stats.rows_inserted++;
+#endif // !PERCONA_SERVER
     update_row_stats(ROWS_INSERTED);
   }
   DBUG_RETURN(rv);
@@ -6407,7 +6505,9 @@ int ha_rocksdb::rnd_next_with_direction(uchar *buf, bool move_forward)
   DBUG_ENTER("ha_rocksdb::rnd_next");
 
   table->status= STATUS_NOT_FOUND;
+#ifndef PERCONA_SERVER
   stats.rows_requested++;
+#endif // !PERCONA_SERVER
 
   if (!scan_it || !scan_it->Valid())
   {
@@ -6481,8 +6581,10 @@ int ha_rocksdb::rnd_next_with_direction(uchar *buf, bool move_forward)
     rc= HA_ERR_END_OF_FILE;
 
   if (!rc) {
+#ifndef PERCONA_SERVER
     stats.rows_read++;
     stats.rows_index_next++;
+#endif // !PERCONA_SERVER
     update_row_stats(ROWS_READ);
   }
 
@@ -6600,7 +6702,9 @@ int ha_rocksdb::delete_row(const uchar *buf)
   {
     DBUG_RETURN(HA_ERR_INTERNAL_ERROR);
   }
+#ifndef PERCONA_SERVER
   stats.rows_deleted++;
+#endif // !PERCONA_SERVER
   update_row_stats(ROWS_DELETED);
 
   DBUG_RETURN(0);
@@ -6792,7 +6896,9 @@ int ha_rocksdb::rnd_pos(uchar *buf, uchar *pos)
   size_t len;
   DBUG_ENTER("ha_rocksdb::rnd_pos");
 
+#ifndef PERCONA_SERVER
   stats.rows_requested++;
+#endif // !PERCONA_SERVER
   len= pk_descr->key_length(table, rocksdb::Slice((const char*)pos,
                                                   ref_length));
   if (len == size_t(-1))
@@ -6804,7 +6910,9 @@ int ha_rocksdb::rnd_pos(uchar *buf, uchar *pos)
 
   if (!rc)
   {
+#ifndef PERCONA_SERVER
     stats.rows_read++;
+#endif // !PERCONA_SERVER
     update_row_stats(ROWS_READ);
   }
 
@@ -6870,7 +6978,9 @@ int ha_rocksdb::update_row(const uchar *old_data, uchar *new_data)
 
   if (rv == 0)
   {
+#ifndef PERCONA_SERVER
     stats.rows_updated++;
+#endif // !PERCONA_SERVER
     update_row_stats(ROWS_UPDATED);
   }
   DBUG_RETURN(rv);
@@ -8791,6 +8901,101 @@ bool ha_rocksdb::rpl_lookup_rows()
 }
 
 }  // namespace myrocks
+
+#ifdef PERCONA_SERVER
+
+String timeout_message(const char *command, const char *name1,
+                       const char *name2)
+{
+    String msg;
+    msg.append("Timeout on ");
+    msg.append(command);
+    msg.append(": ");
+    msg.append(name1);
+    if (name2 && name2[0])
+    {
+      msg.append(".");
+      msg.append(name2);
+    }
+    return msg;
+}
+
+bool is_table_in_list(const std::string& table_name,
+                      const std::vector<std::string>& table_list,
+                      mysql_rwlock_t* lock)
+{
+  bool result = false;
+
+  // Make sure no one else changes the list while we are accessing it.
+  mysql_rwlock_rdlock(lock);
+
+  // See if this table name matches any in the list
+  for (const auto& e: table_list)
+  {
+#ifdef PERCONA_SERVER
+    // PS hack to get around C++14 requirement fo doing something that is a
+    // simple string compare
+    if (e.compare(table_name) == 0)
+#else
+    // Use regular expressions for the match
+    if (std::regex_match(table_name, std::regex(e)))
+#endif
+    {
+      // This table name matches
+      result = true;
+      break;
+    }
+  }
+
+  // Release the mutex
+  mysql_rwlock_unlock(lock);
+
+  return result;
+}
+
+bool can_hold_read_locks_on_select(THD *thd, thr_lock_type lock_type)
+{
+  return (lock_type == TL_READ_WITH_SHARED_LOCKS
+          || lock_type == TL_READ_NO_INSERT
+          || (lock_type != TL_IGNORE
+            && thd->lex->sql_command != SQLCOM_SELECT));
+}
+
+bool can_hold_locks_on_trans(THD *thd, thr_lock_type lock_type)
+{
+  return (lock_type >= TL_WRITE_ALLOW_WRITE
+          || can_hold_read_locks_on_select(thd, lock_type));
+}
+
+// Split a string based on a delimiter.  Two delimiters in a row will not add
+// an empty string in the list.
+std::vector<std::string> split(const std::string& input, char delimiter)
+{
+  size_t                   pos;
+  size_t                   start = 0;
+  std::vector<std::string> elems;
+
+  // Find next delimiter
+  while ((pos = input.find(delimiter, start)) != std::string::npos)
+  {
+    // If there is any data since the last delimiter add it to the list
+    if (pos > start)
+      elems.push_back(input.substr(start, pos - start));
+
+    // Set our start position to the character after the delimiter
+    start = pos + 1;
+  }
+
+  // Add a possible string since the last delimiter
+  if (input.length() > start)
+    elems.push_back(input.substr(start));
+
+  // Return the resulting list back to the caller
+  return elems;
+}
+
+#endif // PERCONA_SERVER
+
 
 /*
   Register the storage engine plugin outside of myrocks namespace

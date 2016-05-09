@@ -135,8 +135,13 @@ Rdb_cf_manager::get_or_create_cf(rocksdb::DB *rdb,
 
     sql_print_information("RocksDB: creating column family %s", cf_name_str.c_str());
     sql_print_information("    write_buffer_size=%ld",    opts.write_buffer_size);
+#ifdef PERCONA_SERVER
+    sql_print_information("    target_file_size_base=%llu",
+                          opts.target_file_size_base);
+#else
     sql_print_information("    target_file_size_base=%" PRIu64,
                           opts.target_file_size_base);
+#endif
 
     rocksdb::Status s= rdb->CreateColumnFamily(opts, cf_name_str, &cf_handle);
     if (s.ok()) {

@@ -394,7 +394,8 @@ enum legacy_db_type
   /** Performance schema engine. */
   DB_TYPE_PERFORMANCE_SCHEMA,
   DB_TYPE_TOKUDB=41,
-  DB_TYPE_FIRST_DYNAMIC=42,
+  DB_TYPE_ROCKSDB=42,
+  DB_TYPE_FIRST_DYNAMIC=43,
   DB_TYPE_DEFAULT=127 // Must be last
 };
 
@@ -2009,6 +2010,8 @@ public:
   {
     cached_table_flags= table_flags();
   }
+
+  virtual bool init_with_fields() { return false; }
   /* ha_ methods: public wrappers for private virtual API */
 
   int ha_open(TABLE *table, const char *name, int mode, int test_if_locked);
